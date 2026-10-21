@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/coverage
+**/.turbo
+.git
+.env
+.env.*
+!.env.example
+playwright-report
+test-results
+deploy/helm
+deploy/kind
+docs
+*.md

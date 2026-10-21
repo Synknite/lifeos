@@ -1,0 +1,170 @@
+# LifeOS local environment.
+#
+#   docker compose up -d                          # infra only (for `pnpm dev` on the host)
+#   docker compose --profile app up --build       # full stack in containers
+#   docker compose --profile ollama up -d         # local LLM + embeddings, no API keys
+#   docker compose --profile observability up -d  # OTel collector + Grafana LGTM
+name: lifeos
+
+x-app-env: &app-env
+  NODE_ENV: production
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DATABASE_URL: postgres://lifeos:lifeos@postgres:5432/lifeos
+  REDIS_URL: redis://valkey:6379
+  LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+  OTEL_ENABLED: ${OTEL_ENABLED:-false}
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
+x-node-healthcheck: &node-healthcheck
+  interval: 10s
+  timeout: 3s
+  retries: 5
+  start_period: 10s
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: lifeos
+      POSTGRES_PASSWORD: lifeos
+      POSTGRES_DB: lifeos
+    ports: ['5432:5432']
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U lifeos -d lifeos']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ['valkey-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    ports: ['6379:6379']
+    volumes: [valkeydata:/data]
+    healthcheck:
+      test: ['CMD', 'valkey-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports: ['8025:8025', '1025:1025']
+
+  # --- app profile ----------------------------------------------------------
+
+  migrate:
+    profiles: [app]
+    build: { context: ., dockerfile: docker/node-app.Dockerfile, args: { APP: api } }
+    image: lifeos-api:local
+    command: ['dist/migrate.js']
+    environment: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: 'no'
+
+  api:
+    profiles: [app]
+    image: lifeos-api:local
+    environment:
+      <<: *app-env
+      WEB_ORIGIN: http://localhost:8080
+    ports: ['3000:3000']
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      valkey: { condition: service_healthy }
+    healthcheck:
+      <<: *node-healthcheck
+      test:
+        [
+          'CMD',
+          '/nodejs/bin/node',
+          '-e',
+          "fetch('http://localhost:3000/readyz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+
+  worker:
+    profiles: [app]
+    build: { context: ., dockerfile: docker/node-app.Dockerfile, args: { APP: worker } }
+    image: lifeos-worker:local
+    environment:
+      <<: *app-env
+      SMTP_URL: smtp://mailpit:1025
+      APP_URL: http://localhost:8080
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      valkey: { condition: service_healthy }
+    healthcheck:
+      <<: *node-healthcheck
+      test:
+        [
+          'CMD',
+          '/nodejs/bin/node',
+          '-e',
+          "fetch('http://localhost:9000/readyz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+
+  web:
+    profiles: [app]
+    build: { context: ., dockerfile: docker/web.Dockerfile }
+    image: lifeos-web:local
+    environment:
+      API_UPSTREAM: http://api:3000
+    ports: ['8080:8080']
+    depends_on:
+      api: { condition: service_healthy }
+
+  # --- ollama profile -------------------------------------------------------
+  # Docker on macOS has no GPU access; for speed run `brew install ollama` on the
+  # host instead and set OLLAMA_BASE_URL=http://host.docker.internal:11434.
+
+  ollama:
+    profiles: [ollama]
+    image: ollama/ollama:0.12.6
+    ports: ['11434:11434']
+    volumes: [ollama:/root/.ollama]
+    healthcheck:
+      test: ['CMD', 'ollama', 'list']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ollama-pull:
+    profiles: [ollama]
+    image: ollama/ollama:0.12.6
+    environment: { OLLAMA_HOST: ollama:11434 }
+    entrypoint:
+      ['sh', '-c', 'ollama pull ${OLLAMA_MODEL:-qwen3:4b} && ollama pull ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}']
+    depends_on:
+      ollama: { condition: service_healthy }
+    restart: 'no'
+
+  # --- observability profile ------------------------------------------------
+
+  otel-collector:
+    profiles: [observability]
+    image: otel/opentelemetry-collector-contrib:0.136.0
+    command: ['--config=/etc/otelcol/config.yaml']
+    volumes: ['./deploy/otel/collector.yaml:/etc/otelcol/config.yaml:ro']
+    ports: ['4317:4317', '4318:4318']
+    depends_on: [lgtm]
+
+  lgtm:
+    profiles: [observability]
+    image: grafana/otel-lgtm:0.11.10
+    ports: ['${GRAFANA_PORT:-3300}:3000']
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./deploy/grafana/dashboards:/otel-lgtm/dashboards/lifeos:ro
+      - ./deploy/grafana/provisioning.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/lifeos.yaml:ro
+
+volumes:
+  pgdata:
+  valkeydata:
+  ollama:
