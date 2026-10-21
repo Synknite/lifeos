@@ -151,7 +151,3 @@ The integration suites cover auth and CSRF, tenant isolation, exactly-once actio
 - Goals broken into milestones and tasks
 - ICS export / Google Calendar sync, Web Push
 - KEDA scaling on queue depth, Argo CD GitOps, nightly LLM evals for capture accuracy
-
-## License
-
-MIT
