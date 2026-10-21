@@ -1,0 +1,5 @@
+coverage/
+deploy/helm/lifeos/templates/
+dist/
+packages/db/migrations/
+pnpm-lock.yaml
