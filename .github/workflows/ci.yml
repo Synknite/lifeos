@@ -117,15 +117,29 @@ jobs:
           load: true
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app }}
-      - name: Scan for vulnerabilities (fail on fixable HIGH/CRITICAL)
+      - name: Scan for vulnerabilities and secrets (gate on fixable HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
+          version: v0.76.1
           image-ref: lifeos-${{ matrix.app }}:ci
+          scanners: vuln,secret
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          # Table output so any finding is readable in the job log.
+          format: table
           exit-code: '1'
+      - name: Scan report for GitHub code scanning
+        if: always()
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          version: v0.76.1
+          skip-setup-trivy: true
+          image-ref: lifeos-${{ matrix.app }}:ci
+          scanners: vuln,secret
+          severity: MEDIUM,HIGH,CRITICAL
           format: sarif
           output: trivy-${{ matrix.app }}.sarif
+          exit-code: '0'
       - uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
