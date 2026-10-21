@@ -1,0 +1,191 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TURBO_TELEMETRY_DISABLED: 1
+  DO_NOT_TRACK: 1
+
+jobs:
+  quality:
+    name: Lint, typecheck, unit tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      - name: Format
+        run: pnpm format:check
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit tests (with coverage)
+        run: pnpm vitest run --project unit --coverage --coverage.reporter=text-summary --coverage.reporter=lcov
+      - name: Build
+        run: pnpm build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+
+  integration:
+    name: Integration tests (Postgres + Valkey via Testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:integration
+
+  helm:
+    name: Helm lint + schema validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-helm@v4
+      - name: Lint (default and kind values)
+        run: |
+          helm lint deploy/helm/lifeos --strict
+          helm lint deploy/helm/lifeos --strict -f deploy/helm/lifeos/values-kind.yaml
+      - name: Validate rendered manifests against Kubernetes 1.32 schemas
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz | tar xz
+          for values in "" "-f deploy/helm/lifeos/values-kind.yaml --set gateway.enabled=true --set ingress.enabled=true"; do
+            helm template lifeos deploy/helm/lifeos --set secretValues.DATABASE_URL=x $values \
+              | ./kubeconform -strict -summary -kubernetes-version 1.32.0 \
+                  -schema-location default \
+                  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+          done
+
+  images:
+    name: Image ${{ matrix.app }} (build + Trivy scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { app: api, dockerfile: docker/node-app.Dockerfile }
+          - { app: worker, dockerfile: docker/node-app.Dockerfile }
+          - { app: web, dockerfile: docker/web.Dockerfile }
+    steps:
+      - uses: actions/checkout@v5
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
+          failure-threshold: error
+      - uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          build-args: |
+            APP=${{ matrix.app }}
+            VERSION=sha-${{ github.sha }}
+            REVISION=${{ github.sha }}
+            SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
+          tags: lifeos-${{ matrix.app }}:ci
+          load: true
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+      - name: Scan for vulnerabilities (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: lifeos-${{ matrix.app }}:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: sarif
+          output: trivy-${{ matrix.app }}.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-${{ matrix.app }}.sarif
+          category: trivy-${{ matrix.app }}
+
+  e2e-compose:
+    name: E2E (docker compose + Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [quality]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Start the stack (keyless demo mode)
+        env:
+          LLM_PROVIDER: mock
+          EMBEDDING_PROVIDER: mock
+        run: docker compose --profile app up -d --build --wait --wait-timeout 300
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Playwright
+        run: pnpm exec playwright test
+        env:
+          E2E_BASE_URL: http://localhost:8080
+      - name: Container logs
+        if: failure()
+        run: docker compose --profile app logs --no-color > compose.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-artifacts
+          path: |
+            playwright-report/
+            test-results/
+            compose.log
+          retention-days: 7
+
+  e2e-kind:
+    name: Kubernetes (kind + helm test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [helm]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-helm@v4
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: lifeos
+          config: deploy/kind/kind-config.yaml
+      - name: Infra (Postgres, Valkey, Mailpit) and secrets
+        run: ./scripts/kind-up.sh
+      - name: Build, load, install, helm test
+        run: ./scripts/kind-deploy.sh
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl -n lifeos get all,events --sort-by=.lastTimestamp
+          kubectl -n lifeos logs -l app.kubernetes.io/instance=lifeos --all-containers --tail=200 --prefix

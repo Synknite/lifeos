@@ -1,0 +1,12 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests", ":semanticCommits"],
+  "schedule": ["before 6am on monday"],
+  "packageRules": [
+    { "matchManagers": ["npm"], "matchUpdateTypes": ["minor", "patch"], "groupName": "npm minor/patch" },
+    { "matchManagers": ["github-actions"], "groupName": "GitHub Actions" },
+    { "matchManagers": ["dockerfile", "docker-compose", "helm-values"], "groupName": "container images" },
+    { "matchPackageNames": ["@anthropic-ai/sdk", "openai", "ollama"], "groupName": "LLM SDKs" }
+  ],
+  "vulnerabilityAlerts": { "labels": ["security"] }
+}
