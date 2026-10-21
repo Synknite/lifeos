@@ -25,7 +25,7 @@ RUN pnpm --filter @lifeos/web build
 FROM nginxinc/nginx-unprivileged:1.30-alpine AS runtime
 ARG VERSION=0.0.0-dev
 ARG REVISION=unknown
-ARG SOURCE_URL=https://github.com/OWNER/lifeos
+ARG SOURCE_URL=https://github.com/Synknite/lifeos
 LABEL org.opencontainers.image.title="lifeos-web" \
       org.opencontainers.image.source="${SOURCE_URL}" \
       org.opencontainers.image.version="${VERSION}" \

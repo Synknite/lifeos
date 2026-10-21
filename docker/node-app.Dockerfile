@@ -45,7 +45,7 @@ FROM gcr.io/distroless/nodejs${NODE_VERSION}-debian13:nonroot AS runtime
 ARG APP
 ARG VERSION=0.0.0-dev
 ARG REVISION=unknown
-ARG SOURCE_URL=https://github.com/OWNER/lifeos
+ARG SOURCE_URL=https://github.com/Synknite/lifeos
 LABEL org.opencontainers.image.title="lifeos-${APP}" \
       org.opencontainers.image.description="LifeOS ${APP}" \
       org.opencontainers.image.source="${SOURCE_URL}" \

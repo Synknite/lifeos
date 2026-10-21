@@ -6,7 +6,7 @@ version: 0.1.0
 appVersion: '0.1.0'
 kubeVersion: '>=1.29.0-0'
 keywords: [assistant, llm, productivity]
-home: https://github.com/OWNER/lifeos
-sources: [https://github.com/OWNER/lifeos]
+home: https://github.com/Synknite/lifeos
+sources: [https://github.com/Synknite/lifeos]
 maintainers:
   - name: LifeOS maintainers

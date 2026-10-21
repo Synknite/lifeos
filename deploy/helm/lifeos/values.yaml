@@ -1,5 +1,5 @@
-# -- Image registry/owner prefix, e.g. ghcr.io/<you>
-imageRegistry: ghcr.io/owner
+# -- Image registry/owner prefix
+imageRegistry: ghcr.io/synknite
 # -- Image tag for all components (defaults to .Chart.AppVersion)
 imageTag: ''
 imagePullPolicy: IfNotPresent

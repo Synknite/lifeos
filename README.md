@@ -6,7 +6,7 @@ LifeOS turns everyday input like _"renew passport next month, high prio"_ into s
 
 The project is also built to show platform-engineering work. It's a typed monorepo with a provider-agnostic LLM layer and background workers. It ships hardened container images, a Helm chart verified on Kubernetes, OpenTelemetry tracing, cost accounting for every LLM call, and CI that blocks merges on tests, vulnerability scans and Kubernetes schema validation.
 
-[![CI](https://github.com/OWNER/lifeos/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/lifeos/actions/workflows/ci.yml)
+[![CI](https://github.com/Synknite/lifeos/actions/workflows/ci.yml/badge.svg)](https://github.com/Synknite/lifeos/actions/workflows/ci.yml)
 
 ---
 
