@@ -1,0 +1,23 @@
+{
+  "name": "@lifeos/llm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.137.0",
+    "@lifeos/config": "workspace:*",
+    "@lifeos/domain": "workspace:*",
+    "@lifeos/observability": "workspace:*",
+    "@opentelemetry/api": "^1.10.0",
+    "chrono-node": "^2.10.3",
+    "ollama": "^0.6.4",
+    "openai": "^7.40.0",
+    "zod": "^4.6.7"
+  }
+}
