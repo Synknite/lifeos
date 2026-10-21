@@ -1,0 +1,18 @@
+LifeOS {{ .Chart.AppVersion }} is deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+{{- if .Values.ingress.enabled }}
+Open: http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}
+{{- else }}
+Port-forward: kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "lifeos.fullname" . }}-web 8080:80
+{{- end }}
+
+Smoke test:   helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+API logs:     kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "lifeos.fullname" . }}-api -f
+Worker logs:  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "lifeos.fullname" . }}-worker -f
+{{- if not .Values.existingSecret }}
+{{- if not .Values.secretValues }}
+
+WARNING: neither existingSecret nor secretValues is set. Create the secret
+"{{ include "lifeos.secretName" . }}" with DATABASE_URL and REDIS_URL before pods can start.
+{{- end }}
+{{- end }}

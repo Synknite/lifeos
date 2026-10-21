@@ -1,0 +1,11 @@
+# Two-node cluster: enough to exercise topology spread, PDBs and rolling
+# updates locally. kindnet doesn't enforce NetworkPolicy; use Calico/Cilium
+# (`make kind-up CNI=calico`) to test policies for real.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: lifeos
+networking:
+  disableDefaultCNI: false
+nodes:
+  - role: control-plane
+  - role: worker

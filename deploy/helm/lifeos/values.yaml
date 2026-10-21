@@ -1,0 +1,113 @@
+# -- Image registry/owner prefix, e.g. ghcr.io/<you>
+imageRegistry: ghcr.io/owner
+# -- Image tag for all components (defaults to .Chart.AppVersion)
+imageTag: ''
+imagePullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Non-secret configuration shared by api and worker.
+config:
+  logLevel: info
+  llmProvider: auto
+  embeddingProvider: auto
+  anthropicModelSmart: claude-opus-5-5
+  anthropicModelFast: claude-opus-5-5
+  ollamaBaseUrl: ''
+  llmDailyTokenBudget: 500000
+  webOrigin: https://lifeos.example.com
+  cookieSecure: true
+  appUrl: https://lifeos.example.com
+  mailFrom: 'LifeOS <noreply@lifeos.example.com>'
+  otel:
+    enabled: false
+    endpoint: http://otel-collector.observability:4318
+
+# Secrets: DATABASE_URL, REDIS_URL, SMTP_URL, ANTHROPIC_API_KEY, OPENAI_API_KEY.
+# In production point `existingSecret` at a Secret managed by External Secrets
+# Operator / Sealed Secrets. `secretValues` is a convenience for local clusters.
+existingSecret: ''
+secretValues: {}
+
+api:
+  replicas: 2
+  port: 3000
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { memory: 512Mi }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    minAvailable: 1
+  terminationGracePeriodSeconds: 30
+
+worker:
+  replicas: 1
+  healthPort: 9000
+  concurrency: 5
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { memory: 512Mi }
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 75
+  pdb:
+    minAvailable: 0
+  terminationGracePeriodSeconds: 45
+
+web:
+  replicas: 2
+  port: 8080
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { memory: 128Mi }
+  pdb:
+    minAvailable: 1
+
+migrations:
+  # Run DB migrations as a pre-install/pre-upgrade hook Job.
+  enabled: true
+  backoffLimit: 2
+
+# Gateway API HTTPRoute (recommended).
+gateway:
+  enabled: false
+  parentRefs:
+    - name: public
+      namespace: gateway-system
+  hostnames: [lifeos.example.com]
+  streamTimeout: 300s
+
+# Classic Ingress, for clusters without Gateway API. The default annotations
+# target NGINX-style controllers (SSE needs buffering off and long timeouts).
+ingress:
+  enabled: false
+  className: ''
+  host: lifeos.example.com
+  annotations: {}
+  tls: []
+
+networkPolicy:
+  enabled: true
+  # Namespace of the gateway/ingress controller allowed to reach api/web.
+  ingressNamespaceSelector:
+    kubernetes.io/metadata.name: gateway-system
+  # Where Postgres/Valkey live; empty selectors mean "same namespace".
+  databaseNamespaceSelector: {}
+  # Plain NetworkPolicy can't filter by hostname, so LLM egress is opened on
+  # 443 to everything outside the cluster. Use Cilium FQDN policies to tighten.
+  allowExternalHttps: true
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile: { type: RuntimeDefault }
+
+nodeSelector: {}
+tolerations: []

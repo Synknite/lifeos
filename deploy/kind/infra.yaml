@@ -1,0 +1,76 @@
+# Throwaway backing services for a local cluster. In real environments use a
+# managed Postgres (RDS/Cloud SQL, or the CloudNativePG operator) and Redis.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: { name: postgres, labels: { app: postgres } }
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: { matchLabels: { app: postgres } }
+  template:
+    metadata: { labels: { app: postgres } }
+    spec:
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:pg17
+          env:
+            - { name: POSTGRES_USER, value: lifeos }
+            - { name: POSTGRES_PASSWORD, value: lifeos }
+            - { name: POSTGRES_DB, value: lifeos }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports: [{ containerPort: 5432 }]
+          readinessProbe:
+            exec: { command: [pg_isready, -U, lifeos] }
+            periodSeconds: 5
+          resources: { requests: { cpu: 100m, memory: 256Mi } }
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 1Gi } } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: postgres }
+spec: { selector: { app: postgres }, ports: [{ port: 5432 }] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: valkey, labels: { app: valkey } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: valkey } }
+  template:
+    metadata: { labels: { app: valkey } }
+    spec:
+      containers:
+        - name: valkey
+          image: valkey/valkey:8-alpine
+          args: [valkey-server, --appendonly, 'yes', --maxmemory-policy, noeviction]
+          ports: [{ containerPort: 6379 }]
+          readinessProbe: { exec: { command: [valkey-cli, ping] }, periodSeconds: 5 }
+          resources: { requests: { cpu: 50m, memory: 64Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: valkey }
+spec: { selector: { app: valkey }, ports: [{ port: 6379 }] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: mailpit, labels: { app: mailpit } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: mailpit } }
+  template:
+    metadata: { labels: { app: mailpit } }
+    spec:
+      containers:
+        - name: mailpit
+          image: axllent/mailpit:v1.27
+          ports: [{ containerPort: 1025 }, { containerPort: 8025 }]
+          resources: { requests: { cpu: 20m, memory: 32Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mailpit }
+spec: { selector: { app: mailpit }, ports: [{ name: smtp, port: 1025 }, { name: http, port: 8025 }] }

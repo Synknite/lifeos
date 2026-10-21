@@ -1,0 +1,25 @@
+# Local kind cluster: images are side-loaded, infra runs in-namespace
+# (deploy/kind/infra.yaml), access via `kubectl port-forward`.
+imageRegistry: lifeos
+imageTag: local
+imagePullPolicy: Never
+
+config:
+  webOrigin: http://localhost:8080
+  appUrl: http://localhost:8080
+  cookieSecure: false
+  mailFrom: 'LifeOS <noreply@lifeos.local>'
+
+existingSecret: lifeos-secrets
+
+api:
+  autoscaling: { enabled: false }
+  replicas: 2
+web:
+  replicas: 1
+  pdb: { minAvailable: 0 }
+
+networkPolicy:
+  enabled: true
+  ingressNamespaceSelector:
+    kubernetes.io/metadata.name: lifeos

@@ -1,0 +1,114 @@
+{{- $c := dict "ctx" . "component" "web" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lifeos.fullname" . }}-web
+  labels:
+    {{- include "lifeos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ .Values.web.replicas }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels: {{- include "lifeos.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "lifeos.labels" . | nindent 8 }}
+        app.kubernetes.io/component: {{ $c.component }}
+    spec:
+      serviceAccountName: {{ include "lifeos.fullname" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile: { type: RuntimeDefault }
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "lifeos.spread" $c | nindent 6 }}
+      containers:
+        - name: web
+          image: {{ include "lifeos.image" $c }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          {{- include "lifeos.containerSecurity" . | nindent 10 }}
+          env:
+            # Fully qualified: nginx's resolver doesn't apply resolv.conf search domains.
+            - name: API_UPSTREAM
+              value: http://{{ include "lifeos.fullname" . }}-api.{{ .Release.Namespace }}.svc.cluster.local
+          ports:
+            - { name: http, containerPort: {{ .Values.web.port }} }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+          resources: {{- toYaml .Values.web.resources | nindent 12 }}
+          # nginx needs writable cache/pid/config dirs with a read-only root FS.
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: cache, mountPath: /var/cache/nginx }
+            - { name: conf, mountPath: /etc/nginx/conf.d }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - { name: cache, emptyDir: {} }
+        - { name: conf, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lifeos.fullname" . }}-web
+  labels:
+    {{- include "lifeos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  selector: {{- include "lifeos.selector" $c | nindent 4 }}
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "lifeos.fullname" . }}-web
+  labels: {{- include "lifeos.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.web.pdb.minAvailable }}
+  selector:
+    matchLabels: {{- include "lifeos.selector" $c | nindent 6 }}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "lifeos.fullname" . }}
+  labels: {{- include "lifeos.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  # SSE needs response buffering off and long read timeouts; set the
+  # controller-specific annotations for your ingress here.
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: {{ include "lifeos.fullname" . }}-api, port: { name: http } }
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: {{ include "lifeos.fullname" . }}-web, port: { name: http } }
+{{- end }}

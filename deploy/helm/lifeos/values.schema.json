@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LifeOS Helm values",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["imageRegistry", "config", "api", "worker", "web"],
+  "$defs": {
+    "resources": {
+      "type": "object",
+      "properties": {
+        "requests": { "type": "object" },
+        "limits": { "type": "object" }
+      },
+      "required": ["requests"]
+    },
+    "autoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minReplicas": { "type": "integer", "minimum": 1 },
+        "maxReplicas": { "type": "integer", "minimum": 1 },
+        "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    },
+    "pdb": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "minAvailable": { "type": "integer", "minimum": 0 } }
+    }
+  },
+  "properties": {
+    "imageRegistry": { "type": "string", "minLength": 1 },
+    "imageTag": { "type": "string" },
+    "imagePullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] },
+    "imagePullSecrets": { "type": "array" },
+    "existingSecret": { "type": "string" },
+    "secretValues": {
+      "type": "object",
+      "propertyNames": {
+        "enum": ["DATABASE_URL", "REDIS_URL", "SMTP_URL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL"]
+      },
+      "additionalProperties": { "type": "string" }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "logLevel": { "enum": ["fatal", "error", "warn", "info", "debug", "trace"] },
+        "llmProvider": { "enum": ["auto", "anthropic", "openai", "ollama", "mock"] },
+        "embeddingProvider": { "enum": ["auto", "openai", "ollama", "mock"] },
+        "anthropicModelSmart": { "type": "string" },
+        "anthropicModelFast": { "type": "string" },
+        "ollamaBaseUrl": { "type": "string" },
+        "llmDailyTokenBudget": { "type": "integer", "minimum": 1 },
+        "webOrigin": { "type": "string", "format": "uri" },
+        "cookieSecure": { "type": "boolean" },
+        "appUrl": { "type": "string", "format": "uri" },
+        "mailFrom": { "type": "string" },
+        "otel": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "enabled": { "type": "boolean" }, "endpoint": { "type": "string" } }
+        }
+      }
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 0 },
+        "port": { "type": "integer" },
+        "resources": { "$ref": "#/$defs/resources" },
+        "autoscaling": { "$ref": "#/$defs/autoscaling" },
+        "pdb": { "$ref": "#/$defs/pdb" },
+        "terminationGracePeriodSeconds": { "type": "integer", "minimum": 10 }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 0 },
+        "healthPort": { "type": "integer" },
+        "concurrency": { "type": "integer", "minimum": 1 },
+        "resources": { "$ref": "#/$defs/resources" },
+        "autoscaling": { "$ref": "#/$defs/autoscaling" },
+        "pdb": { "$ref": "#/$defs/pdb" },
+        "terminationGracePeriodSeconds": { "type": "integer", "minimum": 10 }
+      }
+    },
+    "web": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 0 },
+        "port": { "type": "integer" },
+        "resources": { "$ref": "#/$defs/resources" },
+        "pdb": { "$ref": "#/$defs/pdb" }
+      }
+    },
+    "migrations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "enabled": { "type": "boolean" }, "backoffLimit": { "type": "integer", "minimum": 0 } }
+    },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "parentRefs": { "type": "array", "items": { "type": "object" } },
+        "hostnames": { "type": "array", "items": { "type": "string" } },
+        "streamTimeout": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$" }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "host": { "type": "string" },
+        "annotations": { "type": "object" },
+        "tls": { "type": "array" }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ingressNamespaceSelector": { "type": "object" },
+        "databaseNamespaceSelector": { "type": "object" },
+        "allowExternalHttps": { "type": "boolean" }
+      }
+    },
+    "podSecurityContext": { "type": "object" },
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array" }
+  }
+}

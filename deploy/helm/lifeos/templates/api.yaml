@@ -1,0 +1,121 @@
+{{- $c := dict "ctx" . "component" "api" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lifeos.fullname" . }}-api
+  labels:
+    {{- include "lifeos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels: {{- include "lifeos.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "lifeos.labels" . | nindent 8 }}
+        app.kubernetes.io/component: {{ $c.component }}
+      annotations:
+        # Roll pods when non-secret config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "lifeos.fullname" . }}
+      automountServiceAccountToken: false
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "lifeos.spread" $c | nindent 6 }}
+      containers:
+        - name: api
+          image: {{ include "lifeos.image" $c }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          {{- include "lifeos.containerSecurity" . | nindent 10 }}
+          {{- include "lifeos.env" . | nindent 10 }}
+            - name: PORT
+              value: {{ .Values.api.port | quote }}
+            - name: SHUTDOWN_GRACE_MS
+              value: {{ mul (sub .Values.api.terminationGracePeriodSeconds 8) 1000 | quote }}
+          ports:
+            - { name: http, containerPort: {{ .Values.api.port }} }
+          startupProbe:
+            httpGet: { path: /livez, port: http }
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /livez, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            failureThreshold: 2
+          lifecycle:
+            # Give endpoints/ingress time to drop this pod before SIGTERM.
+            preStop:
+              sleep: { seconds: 5 }
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lifeos.fullname" . }}-api
+  labels:
+    {{- include "lifeos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  selector: {{- include "lifeos.selector" $c | nindent 4 }}
+  ports:
+    - { name: http, port: 80, targetPort: http }
+{{- if .Values.api.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "lifeos.fullname" . }}-api
+  labels: {{- include "lifeos.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "lifeos.fullname" . }}-api
+  minReplicas: {{ .Values.api.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.api.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: {{ .Values.api.autoscaling.targetCPUUtilizationPercentage }} }
+  behavior:
+    scaleDown:
+      # Chat streams are long-lived; scale in slowly.
+      stabilizationWindowSeconds: 300
+{{- end }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "lifeos.fullname" . }}-api
+  labels: {{- include "lifeos.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.api.pdb.minAvailable }}
+  selector:
+    matchLabels: {{- include "lifeos.selector" $c | nindent 6 }}

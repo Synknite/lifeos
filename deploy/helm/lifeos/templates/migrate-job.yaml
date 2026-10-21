@@ -1,0 +1,46 @@
+{{- if .Values.migrations.enabled }}
+# Schema migrations run once per install/upgrade, before new pods start.
+# The migrator takes a Postgres advisory lock, so a stray concurrent run is safe.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "lifeos.fullname" . }}-migrate
+  labels:
+    {{- include "lifeos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "lifeos.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      # Hooks run before the release's ServiceAccount exists; the default SA
+      # is fine because no API token is mounted.
+      automountServiceAccountToken: false
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "lifeos.image" (dict "ctx" . "component" "api") }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          args: ["dist/migrate.js"]
+          {{- include "lifeos.containerSecurity" . | nindent 10 }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: {{ include "lifeos.secretName" . }}, key: DATABASE_URL }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }
+{{- end }}

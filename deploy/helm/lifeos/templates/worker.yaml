@@ -1,0 +1,96 @@
+{{- $c := dict "ctx" . "component" "worker" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lifeos.fullname" . }}-worker
+  labels:
+    {{- include "lifeos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  {{- if not .Values.worker.autoscaling.enabled }}
+  replicas: {{ .Values.worker.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: {{- include "lifeos.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "lifeos.labels" . | nindent 8 }}
+        app.kubernetes.io/component: {{ $c.component }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "lifeos.fullname" . }}
+      automountServiceAccountToken: false
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # Long enough for in-flight jobs (briefing generation) to finish.
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "lifeos.spread" $c | nindent 6 }}
+      containers:
+        - name: worker
+          image: {{ include "lifeos.image" $c }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          {{- include "lifeos.containerSecurity" . | nindent 10 }}
+          {{- include "lifeos.env" . | nindent 10 }}
+            - name: HEALTH_PORT
+              value: {{ .Values.worker.healthPort | quote }}
+          ports:
+            - { name: health, containerPort: {{ .Values.worker.healthPort }} }
+          startupProbe:
+            httpGet: { path: /livez, port: health }
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /livez, port: health }
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /readyz, port: health }
+            periodSeconds: 10
+          resources: {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- if .Values.worker.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "lifeos.fullname" . }}-worker
+  labels: {{- include "lifeos.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "lifeos.fullname" . }}-worker
+  minReplicas: {{ .Values.worker.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.worker.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: {{ .Values.worker.autoscaling.targetCPUUtilizationPercentage }} }
+{{- end }}
+{{- if gt (int .Values.worker.pdb.minAvailable) 0 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "lifeos.fullname" . }}-worker
+  labels: {{- include "lifeos.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.worker.pdb.minAvailable }}
+  selector:
+    matchLabels: {{- include "lifeos.selector" $c | nindent 6 }}
+{{- end }}

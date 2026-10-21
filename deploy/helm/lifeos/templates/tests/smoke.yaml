@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "lifeos.fullname" . }}-test
+  labels:
+    {{- include "lifeos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile: { type: RuntimeDefault }
+  containers:
+    - name: smoke
+      # Reuse the api image (has node); no extra image to pull or trust.
+      image: {{ include "lifeos.image" (dict "ctx" . "component" "api") }}
+      imagePullPolicy: {{ .Values.imagePullPolicy }}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: { drop: [ALL] }
+      command: ["/nodejs/bin/node", "-e"]
+      args:
+        - |
+          const base = 'http://{{ include "lifeos.fullname" . }}-api';
+          const web = 'http://{{ include "lifeos.fullname" . }}-web';
+          const check = async (url, expect) => {
+            const res = await fetch(url);
+            const body = await res.text();
+            if (res.status !== expect) throw new Error(`${url} -> ${res.status}: ${body}`);
+            console.log('ok', url, res.status);
+            return body;
+          };
+          (async () => {
+            const ready = JSON.parse(await check(base + '/readyz', 200));
+            if (ready.status !== 'ok') throw new Error('not ready');
+            await check(base + '/api/meta', 200);
+            await check(base + '/api/tasks', 401);
+            await check(web + '/healthz', 200);
+            const html = await check(web + '/', 200);
+            if (!html.includes('<div id="root">')) throw new Error('web shell missing');
+            // Full flow through the web proxy: sign up, then create a task.
+            const email = `helm-test-${Date.now()}@example.com`;
+            const signup = await fetch(web + '/api/auth/signup', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ email, password: 'correct horse battery', displayName: 'Helm Test' }),
+            });
+            if (signup.status !== 201) throw new Error('signup failed: ' + signup.status);
+            const cookie = signup.headers.get('set-cookie').split(';')[0];
+            const task = await fetch(web + '/api/tasks', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json', cookie },
+              body: JSON.stringify({ title: 'helm test task' }),
+            });
+            if (task.status !== 201) throw new Error('create task failed: ' + task.status);
+            console.log('smoke test passed');
+          })().catch((e) => { console.error(e); process.exit(1); });
+      resources:
+        requests: { cpu: 10m, memory: 64Mi }
+        limits: { memory: 128Mi }
